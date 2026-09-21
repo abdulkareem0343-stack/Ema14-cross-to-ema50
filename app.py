@@ -1,7 +1,7 @@
 import streamlit as st
 import ccxt
 import pandas as pd
-import pandas_ta as ta
+from ta.trend import EMAIndicator
 
 # Page configuration
 st.set_page_config(page_title="EMA Crossover Scanner", page_icon="📈", layout="wide")
@@ -25,9 +25,12 @@ def check_ema_cross(symbol, tf):
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
-        # Calculate EMAs
-        df['EMA14'] = ta.ema(df['close'], length=14)
-        df['EMA50'] = ta.ema(df['close'], length=50)
+        # Calculate EMAs using 'ta' library
+        ema14_indicator = EMAIndicator(close=df['close'], window=14)
+        ema50_indicator = EMAIndicator(close=df['close'], window=50)
+        
+        df['EMA14'] = ema14_indicator.ema_indicator()
+        df['EMA50'] = ema50_indicator.ema_indicator()
         
         prev_ema14 = df['EMA14'].iloc[-2]
         prev_ema50 = df['EMA50'].iloc[-2]
@@ -60,11 +63,9 @@ if st.button("🚀 Start Scanning"):
             
         df_results = pd.DataFrame(results)
         
-        # Highlight Crossovers
         st.subheader(f"Scan Results ({timeframe} Timeframe)")
         st.dataframe(df_results, use_container_width=True)
         
-        # Summary
         bullish = df_results[df_results['Status'] == '🟢 BULLISH CROSS']
         bearish = df_results[df_results['Status'] == '🔴 BEARISH CROSS']
         
