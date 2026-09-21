@@ -148,6 +148,9 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
         df_results = pd.DataFrame(results)
         
         if not df_results.empty:
+            # Sort dataframe by Gap % in ascending order (Low to High)
+            df_results = df_results.sort_values(by='Gap %', ascending=True)
+            
             bullish_df = df_results[df_results['Cross Type'] == 'Bullish']
             bearish_df = df_results[df_results['Cross Type'] == 'Bearish']
             
@@ -181,5 +184,5 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
                 render_coin_cards(crossovers)
                 
             with tab4:
-                st.subheader("📋 Complete Table View")
+                st.subheader("📋 Complete Table View (Sorted by Gap %: Lowest to Highest)")
                 st.dataframe(df_results, use_container_width=True)
