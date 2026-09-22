@@ -7,7 +7,7 @@ from ta.trend import EMAIndicator
 st.set_page_config(page_title="KuCoin EMA & Gainers/Losers Scanner", page_icon="📈", layout="wide")
 
 st.title("📈 KuCoin Advance EMA Scanner")
-st.caption("Bullish/Bearish Crosses aur Top Gainers/Losers ke independent alag filters ke sath live market scan karein.")
+st.caption("Bullish/Bearish Crosses aur Top Gainers/Losers ke independent filters ke sath live market scan karein.")
 
 # Sidebar settings
 st.sidebar.header("⚙️ Scanner Settings")
@@ -38,23 +38,23 @@ performance_filter = st.sidebar.selectbox(
     ]
 )
 
-# Fetch KuCoin USDT Pairs Dynamically
-@st.cache_data(ttl=3600)
+# Fetch KuCoin USDT Pairs & 24h Ticker Data Dynamically
+@st.cache_data(ttl=300)
 def get_kucoin_usdt_pairs(max_coins):
     try:
         exchange = ccxt.kucoin({'enableRateLimit': True})
-        markets = exchange.load_markets()
+        tickers = exchange.fetch_tickers()
         usdt_pairs = [
-            symbol for symbol in markets.keys() 
-            if symbol.endswith('/USDT') and markets[symbol]['active']
+            symbol for symbol in tickers.keys() 
+            if symbol.endswith('/USDT') and tickers[symbol].get('active', True)
         ]
-        return usdt_pairs[:max_coins]
+        return usdt_pairs[:max_coins], tickers
     except Exception as e:
         st.error(f"Error fetching symbols from KuCoin: {e}")
-        return []
+        return [], {}
 
 # Function to calculate EMA and detect cross
-def check_ema_cross(exchange, symbol, tf):
+def check_ema_cross(exchange, symbol, tf, ticker):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=100)
         if len(ohlcv) < 50:
@@ -74,10 +74,14 @@ def check_ema_cross(exchange, symbol, tf):
         curr_ema14 = df['EMA14'].iloc[-1]
         curr_ema50 = df['EMA50'].iloc[-1]
         curr_price = df['close'].iloc[-1]
-        volume_24h = df['volume'].iloc[-1] * curr_price
         
-        # Calculate 24h / candle change %
-        price_change_pct = ((curr_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+        # Use 24h Change % from ticker if available
+        if ticker and 'percentage' in ticker and ticker['percentage'] is not None:
+            price_change_pct = ticker['percentage']
+        else:
+            price_change_pct = ((curr_price - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+            
+        volume_24h = ticker.get('quoteVolume', df['volume'].iloc[-1] * curr_price) if ticker else df['volume'].iloc[-1] * curr_price
         ema_gap = ((curr_ema14 - curr_ema50) / curr_ema50) * 100
         
         status = "NO CROSS"
@@ -96,8 +100,8 @@ def check_ema_cross(exchange, symbol, tf):
             "EMA 14": curr_ema14,
             "EMA 50": curr_ema50,
             "Gap %": round(ema_gap, 2),
-            "Change %": round(price_change_pct, 2),
-            "Volume ($)": f"${volume_24h:,.0f}",
+            "24h Change %": round(price_change_pct, 2),
+            "Volume ($)": f"${volume_24h:,.0f}" if volume_24h else "$0",
             "Status": status,
             "Cross Type": cross_type
         }
@@ -136,7 +140,7 @@ def render_coin_cards(df_list):
                         <hr style="margin:4px 0 8px 0; border-color:#374151;">
                         <div style="display:flex; justify-content: space-between; font-size:13px;">
                             <span><b>Price:</b> ${row['Price']:,.4f}</span>
-                            <span style="color:{'#10B981' if row['Change %'] >= 0 else '#EF4444'}"><b>Chg:</b> {row['Change %']}%</span>
+                            <span style="color:{'#10B981' if row['24h Change %'] >= 0 else '#EF4444'}"><b>Chg:</b> {row['24h Change %']}%</span>
                         </div>
                         <div style="display:flex; justify-content: space-between; font-size:12px; color:#D1D5DB; margin-top:4px;">
                             <span><b>EMA 14:</b> {row['EMA 14']:.4f}</span>
@@ -153,7 +157,7 @@ def render_coin_cards(df_list):
 
 if st.button("🚀 Start Scanning KuCoin", type="primary"):
     exchange = ccxt.kucoin({'enableRateLimit': True})
-    symbols = get_kucoin_usdt_pairs(limit_coins)
+    symbols, tickers = get_kucoin_usdt_pairs(limit_coins)
     
     if not symbols:
         st.warning("No KuCoin pairs found.")
@@ -163,7 +167,8 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
         results = []
         
         for i, sym in enumerate(symbols):
-            res = check_ema_cross(exchange, sym, timeframe)
+            sym_ticker = tickers.get(sym, {})
+            res = check_ema_cross(exchange, sym, timeframe, sym_ticker)
             if res:
                 results.append(res)
             progress_bar.progress((i + 1) / len(symbols))
@@ -183,11 +188,12 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
                 
             # Apply 2: Gainer / Loser Filter
             if performance_filter == "🚀 Top Gainers Only (% Change High to Low)":
-                filtered_df = filtered_df.sort_values(by='Change %', ascending=False)
+                filtered_df = filtered_df[filtered_df['24h Change %'] > 0]
+                filtered_df = filtered_df.sort_values(by='24h Change %', ascending=False)
             elif performance_filter == "📉 Top Losers Only (% Change Low to High)":
-                filtered_df = filtered_df.sort_values(by='Change %', ascending=True)
+                filtered_df = filtered_df[filtered_df['24h Change %'] < 0]
+                filtered_df = filtered_df.sort_values(by='24h Change %', ascending=True)
             else:
-                # Default sorting by Gap % (Lowest to Highest)
                 filtered_df = filtered_df.sort_values(by='Gap %', ascending=True)
 
             # Summary Metrics Bar
