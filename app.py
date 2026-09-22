@@ -7,7 +7,7 @@ from ta.trend import EMAIndicator
 st.set_page_config(page_title="KuCoin EMA & Gainers/Losers Scanner", page_icon="📈", layout="wide")
 
 st.title("📈 KuCoin Advance EMA Scanner")
-st.caption("Bullish/Bearish Crosses aur Top Gainers/Losers ke independent filters ke sath live market scan karein.")
+st.caption("Custom EMA position, fresh crossovers, and Gainers/Losers filters.")
 
 # Sidebar settings
 st.sidebar.header("⚙️ Scanner Settings")
@@ -17,14 +17,15 @@ limit_coins = st.sidebar.slider("Number of Coins to Scan", min_value=50, max_val
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Independent Filters")
 
-# Filter 1: Crossover Filter
+# Filter 1: EMA Position / Crossover Filter
 signal_filter = st.sidebar.selectbox(
-    "1️⃣ Signal / Cross Filter",
+    "1️⃣ EMA Position / Crossover Filter",
     [
-        "All Signals",
-        "🟢 Bullish Cross Only (EMA 14 > EMA 50)",
-        "🔴 Bearish Cross Only (EMA 50 > EMA 14)",
-        "⚪ No Cross Only"
+        "All / Any State",
+        "🟢 EMA 14 Above EMA 50 (EMA 14 > EMA 50)",
+        "🔴 EMA 50 Above EMA 14 (EMA 50 > EMA 14)",
+        "⚡ Fresh Bullish Crossover Just Now",
+        "⚡ Fresh Bearish Crossover Just Now"
     ]
 )
 
@@ -53,8 +54,8 @@ def get_kucoin_usdt_pairs(max_coins):
         st.error(f"Error fetching symbols from KuCoin: {e}")
         return [], {}
 
-# Function to calculate EMA and detect cross
-def check_ema_cross(exchange, symbol, tf, ticker):
+# Function to calculate EMA and check conditions
+def check_ema_status(exchange, symbol, tf, ticker):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=100)
         if len(ohlcv) < 50:
@@ -75,7 +76,7 @@ def check_ema_cross(exchange, symbol, tf, ticker):
         curr_ema50 = df['EMA50'].iloc[-1]
         curr_price = df['close'].iloc[-1]
         
-        # Use 24h Change % from ticker if available
+        # Use 24h Change % from ticker
         if ticker and 'percentage' in ticker and ticker['percentage'] is not None:
             price_change_pct = ticker['percentage']
         else:
@@ -84,15 +85,17 @@ def check_ema_cross(exchange, symbol, tf, ticker):
         volume_24h = ticker.get('quoteVolume', df['volume'].iloc[-1] * curr_price) if ticker else df['volume'].iloc[-1] * curr_price
         ema_gap = ((curr_ema14 - curr_ema50) / curr_ema50) * 100
         
-        status = "NO CROSS"
-        cross_type = "None"
+        is_fresh_bull_cross = (prev_ema14 <= prev_ema50) and (curr_ema14 > curr_ema50)
+        is_fresh_bear_cross = (prev_ema14 >= prev_ema50) and (curr_ema14 < curr_ema50)
         
-        if prev_ema14 <= prev_ema50 and curr_ema14 > curr_ema50:
-            status = "🟢 BULLISH CROSS (EMA 14 > EMA 50)"
-            cross_type = "Bullish"
-        elif prev_ema14 >= prev_ema50 and curr_ema14 < curr_ema50:
-            status = "🔴 BEARISH CROSS (EMA 50 > EMA 14)"
-            cross_type = "Bearish"
+        if is_fresh_bull_cross:
+            status_text = "⚡ FRESH BULLISH CROSS"
+        elif is_fresh_bear_cross:
+            status_text = "⚡ FRESH BEARISH CROSS"
+        elif curr_ema14 > curr_ema50:
+            status_text = "🟢 EMA 14 > EMA 50 (Bullish Zone)"
+        else:
+            status_text = "🔴 EMA 50 > EMA 14 (Bearish Zone)"
             
         return {
             "Symbol": symbol,
@@ -102,8 +105,10 @@ def check_ema_cross(exchange, symbol, tf, ticker):
             "Gap %": round(ema_gap, 2),
             "24h Change %": round(price_change_pct, 2),
             "Volume ($)": f"${volume_24h:,.0f}" if volume_24h else "$0",
-            "Status": status,
-            "Cross Type": cross_type
+            "Status": status_text,
+            "EMA14_Above": curr_ema14 > curr_ema50,
+            "Fresh_Bull": is_fresh_bull_cross,
+            "Fresh_Bear": is_fresh_bear_cross
         }
     except Exception:
         return None
@@ -111,7 +116,7 @@ def check_ema_cross(exchange, symbol, tf, ticker):
 # Render Advance Cards Layout
 def render_coin_cards(df_list):
     if df_list.empty:
-        st.info("Koi coin is selection mein nahi mila.")
+        st.info("No coin match di selected filters.")
         return
         
     cols_per_row = 3
@@ -120,15 +125,12 @@ def render_coin_cards(df_list):
     for idx, row in df_list.reset_index(drop=True).iterrows():
         col = cols[idx % cols_per_row]
         with col:
-            if row['Cross Type'] == 'Bullish':
+            if row['EMA14_Above']:
                 border_color = "#10B981"
                 bg_style = "rgba(16, 185, 129, 0.1)"
-            elif row['Cross Type'] == 'Bearish':
+            else:
                 border_color = "#EF4444"
                 bg_style = "rgba(239, 68, 68, 0.1)"
-            else:
-                border_color = "#6B7280"
-                bg_style = "rgba(107, 114, 128, 0.05)"
                 
             with st.container():
                 st.markdown(
@@ -168,7 +170,7 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
         
         for i, sym in enumerate(symbols):
             sym_ticker = tickers.get(sym, {})
-            res = check_ema_cross(exchange, sym, timeframe, sym_ticker)
+            res = check_ema_status(exchange, sym, timeframe, sym_ticker)
             if res:
                 results.append(res)
             progress_bar.progress((i + 1) / len(symbols))
@@ -178,15 +180,17 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
         if not df_results.empty:
             filtered_df = df_results.copy()
             
-            # Apply 1: Signal Filter
-            if signal_filter == "🟢 Bullish Cross Only (EMA 14 > EMA 50)":
-                filtered_df = filtered_df[filtered_df['Cross Type'] == 'Bullish']
-            elif signal_filter == "🔴 Bearish Cross Only (EMA 50 > EMA 14)":
-                filtered_df = filtered_df[filtered_df['Cross Type'] == 'Bearish']
-            elif signal_filter == "⚪ No Cross Only":
-                filtered_df = filtered_df[filtered_df['Cross Type'] == 'None']
+            # Apply Filter 1: EMA Position / Cross Filter
+            if signal_filter == "🟢 EMA 14 Above EMA 50 (EMA 14 > EMA 50)":
+                filtered_df = filtered_df[filtered_df['EMA14_Above'] == True]
+            elif signal_filter == "🔴 EMA 50 Above EMA 14 (EMA 50 > EMA 14)":
+                filtered_df = filtered_df[filtered_df['EMA14_Above'] == False]
+            elif signal_filter == "⚡ Fresh Bullish Crossover Just Now":
+                filtered_df = filtered_df[filtered_df['Fresh_Bull'] == True]
+            elif signal_filter == "⚡ Fresh Bearish Crossover Just Now":
+                filtered_df = filtered_df[filtered_df['Fresh_Bear'] == True]
                 
-            # Apply 2: Gainer / Loser Filter
+            # Apply Filter 2: Gainer / Loser Filter
             if performance_filter == "🚀 Top Gainers Only (% Change High to Low)":
                 filtered_df = filtered_df[filtered_df['24h Change %'] > 0]
                 filtered_df = filtered_df.sort_values(by='24h Change %', ascending=False)
@@ -197,13 +201,13 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
                 filtered_df = filtered_df.sort_values(by='Gap %', ascending=True)
 
             # Summary Metrics Bar
-            bullish_count = len(df_results[df_results['Cross Type'] == 'Bullish'])
-            bearish_count = len(df_results[df_results['Cross Type'] == 'Bearish'])
+            bullish_zone_count = len(df_results[df_results['EMA14_Above'] == True])
+            bearish_zone_count = len(df_results[df_results['EMA14_Above'] == False])
             
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Scanned", len(df_results))
-            m2.metric("🟢 Bullish Crosses", bullish_count)
-            m3.metric("🔴 Bearish Crosses", bearish_count)
+            m2.metric("🟢 EMA 14 > EMA 50", bullish_zone_count)
+            m3.metric("🔴 EMA 50 > EMA 14", bearish_zone_count)
             m4.metric("Matching Filter Results", len(filtered_df))
             
             st.write("---")
@@ -216,5 +220,5 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
                 render_coin_cards(filtered_df)
                 
             with tab2:
-                st.subheader("📋 Table View (Sorted as per selection)")
+                st.subheader("📋 Table View")
                 st.dataframe(filtered_df, use_container_width=True)
