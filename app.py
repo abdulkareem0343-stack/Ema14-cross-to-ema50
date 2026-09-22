@@ -4,23 +4,35 @@ import pandas as pd
 from ta.trend import EMAIndicator
 
 # Page configuration
-st.set_page_config(page_title="KuCoin Advance EMA Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="KuCoin EMA & Gainers/Losers Scanner", page_icon="📈", layout="wide")
 
-st.title("📈 KuCoin Advance EMA 14 / 50 & Gainers/Losers Scanner")
-st.caption("Custom filters ke sath EMA 14/50 crossovers aur Top Gainers / Losers coins live scan karein.")
+st.title("📈 KuCoin Advance EMA Scanner")
+st.caption("Bullish/Bearish Crosses aur Top Gainers/Losers ke independent alag filters ke sath live market scan karein.")
 
 # Sidebar settings
 st.sidebar.header("⚙️ Scanner Settings")
 timeframe = st.sidebar.selectbox("Select Timeframe", ['5m', '15m', '1h', '4h', '1d'], index=2)
 limit_coins = st.sidebar.slider("Number of Coins to Scan", min_value=50, max_value=600, value=300, step=50)
 
-# Sidebar Filter
-filter_option = st.sidebar.selectbox(
-    "🎯 Select View Filter",
+st.sidebar.markdown("---")
+st.sidebar.header("🎯 Independent Filters")
+
+# Filter 1: Crossover Filter
+signal_filter = st.sidebar.selectbox(
+    "1️⃣ Signal / Cross Filter",
     [
-        "All Scanned Coins",
+        "All Signals",
         "🟢 Bullish Cross Only (EMA 14 > EMA 50)",
         "🔴 Bearish Cross Only (EMA 50 > EMA 14)",
+        "⚪ No Cross Only"
+    ]
+)
+
+# Filter 2: Gainer / Loser Filter
+performance_filter = st.sidebar.selectbox(
+    "2️⃣ Gainer / Loser Filter",
+    [
+        "All Coins (Normal Order)",
         "🚀 Top Gainers Only (% Change High to Low)",
         "📉 Top Losers Only (% Change Low to High)"
     ]
@@ -95,7 +107,7 @@ def check_ema_cross(exchange, symbol, tf):
 # Render Advance Cards Layout
 def render_coin_cards(df_list):
     if df_list.empty:
-        st.info("Koi coin is category mein nahi mila.")
+        st.info("Koi coin is selection mein nahi mila.")
         return
         
     cols_per_row = 3
@@ -159,62 +171,44 @@ if st.button("🚀 Start Scanning KuCoin", type="primary"):
         df_results = pd.DataFrame(results)
         
         if not df_results.empty:
-            # Sort dataframe by Gap % in ascending order (Low to High) for table view
-            df_results = df_results.sort_values(by='Gap %', ascending=True)
+            filtered_df = df_results.copy()
             
-            bullish_df = df_results[df_results['Cross Type'] == 'Bullish']
-            bearish_df = df_results[df_results['Cross Type'] == 'Bearish']
-            gainers_df = df_results.sort_values(by='Change %', ascending=False)
-            losers_df = df_results.sort_values(by='Change %', ascending=True)
-            
+            # Apply 1: Signal Filter
+            if signal_filter == "🟢 Bullish Cross Only (EMA 14 > EMA 50)":
+                filtered_df = filtered_df[filtered_df['Cross Type'] == 'Bullish']
+            elif signal_filter == "🔴 Bearish Cross Only (EMA 50 > EMA 14)":
+                filtered_df = filtered_df[filtered_df['Cross Type'] == 'Bearish']
+            elif signal_filter == "⚪ No Cross Only":
+                filtered_df = filtered_df[filtered_df['Cross Type'] == 'None']
+                
+            # Apply 2: Gainer / Loser Filter
+            if performance_filter == "🚀 Top Gainers Only (% Change High to Low)":
+                filtered_df = filtered_df.sort_values(by='Change %', ascending=False)
+            elif performance_filter == "📉 Top Losers Only (% Change Low to High)":
+                filtered_df = filtered_df.sort_values(by='Change %', ascending=True)
+            else:
+                # Default sorting by Gap % (Lowest to Highest)
+                filtered_df = filtered_df.sort_values(by='Gap %', ascending=True)
+
             # Summary Metrics Bar
+            bullish_count = len(df_results[df_results['Cross Type'] == 'Bullish'])
+            bearish_count = len(df_results[df_results['Cross Type'] == 'Bearish'])
+            
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total Scanned", len(df_results))
-            m2.metric("🟢 Bullish Crosses", len(bullish_df))
-            m3.metric("🔴 Bearish Crosses", len(bearish_df))
-            m4.metric("🚀 Top Gainer", f"{gainers_df.iloc[0]['Symbol']} ({gainers_df.iloc[0]['Change %']}%)" if not gainers_df.empty else "-")
+            m2.metric("🟢 Bullish Crosses", bullish_count)
+            m3.metric("🔴 Bearish Crosses", bearish_count)
+            m4.metric("Matching Filter Results", len(filtered_df))
             
             st.write("---")
             
-            # Filter Logic Based on Sidebar Selection
-            if filter_option == "🟢 Bullish Cross Only (EMA 14 > EMA 50)":
-                st.subheader("🟢 Bullish Crossover Coins (EMA 14 > EMA 50)")
-                render_coin_cards(bullish_df)
-            elif filter_option == "🔴 Bearish Cross Only (EMA 50 > EMA 14)":
-                st.subheader("🔴 Bearish Crossover Coins (EMA 50 > EMA 14)")
-                render_coin_cards(bearish_df)
-            elif filter_option == "🚀 Top Gainers Only (% Change High to Low)":
-                st.subheader("🚀 Top Gainers Coins")
-                render_coin_cards(gainers_df)
-            elif filter_option == "📉 Top Losers Only (% Change Low to High)":
-                st.subheader("📉 Top Losers Coins")
-                render_coin_cards(losers_df)
-            else:
-                # Default Tabs View
-                tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                    f"🟢 Bullish ({len(bullish_df)})", 
-                    f"🔴 Bearish ({len(bearish_df)})", 
-                    "🚀 Top Gainers",
-                    "📉 Top Losers",
-                    "📋 Table View"
-                ])
+            # Display Options Tabs
+            tab1, tab2 = st.tabs(["🎴 Advance Cards View", "📋 Complete Table View"])
+            
+            with tab1:
+                st.subheader(f"Results ({len(filtered_df)} Coins Found)")
+                render_coin_cards(filtered_df)
                 
-                with tab1:
-                    st.subheader("🟢 Bullish Crossover Coins (EMA 14 > EMA 50)")
-                    render_coin_cards(bullish_df)
-                    
-                with tab2:
-                    st.subheader("🔴 Bearish Crossover Coins (EMA 50 > EMA 14)")
-                    render_coin_cards(bearish_df)
-
-                with tab3:
-                    st.subheader("🚀 Top Gainers")
-                    render_coin_cards(gainers_df)
-
-                with tab4:
-                    st.subheader("📉 Top Losers")
-                    render_coin_cards(losers_df)
-                    
-                with tab5:
-                    st.subheader("📋 Complete Table View (Sorted by Gap %: Lowest to Highest)")
-                    st.dataframe(df_results, use_container_width=True)
+            with tab2:
+                st.subheader("📋 Table View (Sorted as per selection)")
+                st.dataframe(filtered_df, use_container_width=True)
