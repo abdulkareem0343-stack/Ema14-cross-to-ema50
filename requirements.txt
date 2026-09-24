@@ -1,4 +1,2 @@
-streamlit
-ccxt
-pandas
-ta
+pip install ccxt pandas pandas-ta
+
